@@ -1,0 +1,13 @@
+#!/bin/sh
+_perl="$(dirname "$0")"/perl/bin/perl
+[ -x "$_perl" ] || _perl=perl
+exec "$_perl" -x "$0" "$@"
+#!perl
+use FindBin '$Bin';
+use lib "$Bin/local/lib/perl5", "$Bin/lib";
+use Miniqlo::Base;
+use Miniqlo::Runner;
+
+Miniqlo::Runner->run;
+
+__END__
