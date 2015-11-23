@@ -3,4 +3,4 @@ use FindBin '$Bin';
 use lib "$Bin/local/lib/perl5", "$Bin/lib";
 use Miniqlo::Runner;
 
-Miniqlo::Runner->new->run;
+Miniqlo::Runner->run(@ARGV);
