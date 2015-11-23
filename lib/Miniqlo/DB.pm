@@ -7,7 +7,10 @@ package Miniqlo::DB::Schema {
     table {
         name 'history';
         pk qw(name start_time);
-        columns qw(name start_time end_time success logfile);
+        columns qw(name start_time end_time success log_file);
+        for my $int (qw(start_time end_time success)) {
+            inflate $int => sub { 0 + shift };
+        }
     };
     $INC{"Miniqlo/DB/Schema.pm"} = __FILE__;
 }
@@ -19,7 +22,7 @@ sub new ($class, %option) {
         start_time INT  NOT NULL,
         end_time   INT  DEFAULT 0,
         success    INT  DEFAULT -1,
-        logfile    TEXT NOT NULL,
+        log_file    TEXT NOT NULL,
         UNIQUE (name, start_time)
     );
     ...

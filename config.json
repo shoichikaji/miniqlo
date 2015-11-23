@@ -1,0 +1,9 @@
+{
+  "base_dir": "./",
+  "daemonize": false,
+  "web": {
+    "host": "0.0.0.0",
+    "port": "5000",
+    "max_workers": 10
+  }
+}

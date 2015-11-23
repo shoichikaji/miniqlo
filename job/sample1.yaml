@@ -1,2 +1,2 @@
 script: echo "hello"; sleep 1; echo "done"
-every: * * * * *
+every: "* * * * *"

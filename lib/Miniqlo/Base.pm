@@ -3,7 +3,7 @@ use 5.22.0;
 use warnings;
 use utf8;
 use feature ();
-use experimental qw(postderef signatures);
+use experimental ();
 
 sub import {
     $_->import for qw(strict warnings utf8);

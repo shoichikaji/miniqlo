@@ -1,98 +1,107 @@
 package Miniqlo::Runner;
 use Miniqlo::Base;
-use Miniqlo::Job;
-use Miniqlo::DB;
+use Miniqlo::Web;
+use Miniqlo;
+
 use Proclet;
-use Path::Tiny ();
-use Time::Piece ();
+use Plack::Loader;
+use JSON::PP ();
+use Getopt::Long qw(:config no_auto_abbrev no_ignore_case bundling);
 
-sub new ($class) {
-    my $self = bless {}, $class;
-    my $dbname = $self->base_dir . "/var/history.sqlite";
-    $self->{db} = Miniqlo::DB->new(connect_info => ["dbi:SQLite:dbname=$dbname", "", ""]);
-    $self;
-}
-sub db ($self) { $self->{db} }
-
-sub base_dir ($self) {
-    $self->{base_dir} ||= Path::Tiny->new($0)->dirname->absolute;
-}
-sub cron_logfile ($self, $name, $time) {
-    my $file = sprintf "%s/log/%s/%s", $self->base_dir, $name,
-        $time->strftime("%Y-%m-%d/%H-%M-%s.log");
-    Path::Tiny->new($file);
-}
-sub load_jobs ($self) {
-    my $base_dir = $self->base_dir;
-    my @file = glob "$base_dir/job/*.yaml $base_dir/job/*.yml $base_dir/job/*.json";
-    my @jobs;
-    for my $file (@file) {
-        push @jobs, Miniqlo::Job->new_from_file($file);
+sub new ($class) { bless {}, $class }
+sub c ($self) { Miniqlo->context || Miniqlo->bootstrap }
+sub host ($self) { $self->{host} }
+sub port ($self) { $self->{port} }
+sub log_ttl ($self) { $self->{log_ttl} }
+sub parse_options ($self, @argv) {
+    local @ARGV = @argv;
+    GetOptions
+        "c|config=s"    => \my $config_file,
+        "p|port=i"      => \my $port,
+        "host=s"        => \my $host,
+        "base_dir=s"    => \my $base_dir,
+        "d|daemonize"   => \my $daemonize,
+        "log_ttl_day=i" => \my $log_ttl_day,
+    or exit 1;
+    my $config = +{};
+    if ($config_file) {
+        my $content = do {
+            open my $fh, "<", $config_file or die "open $config: $!"; local $/; <$fh>;
+        };
+        $config = JSON::PP->new->decode($content);
     }
-    \@jobs;
-}
-
-sub info ($self, $fh, $msg) {
-    chomp $msg;
-    $fh->print(
-        Time::Piece->new->strftime("%F %T ") . $msg . "\n"
-    );
-}
-
-use Fcntl ':flock';
-sub create_running_file ($self, $job_name) {
-    my $var_dir = $self->base_dir . "/var/running";
-    my $file = "$var_dir/$job_name";
-    open my $fh, ">+", $file;
-    my $ok = flock $fh, LOCK_EX | LOCK_NB;
-    if ($ok) {
-        return { fh => $fh, path => $file };
-    } else {
-        return;
+    $config->{web} ||= +{};
+    $self->{port}        = $port        || $config->{web}{port}   || 5000;
+    $self->{host}        = $host        || $config->{web}{host}   || '0.0.0.0';
+    $self->{log_ttl_day} = $log_ttl_day || $config->{log_ttl_day} || 14;
+    $self->{daemonize}   = $daemonize   || $config->{daemonize}   || 0;
+    $self->{log_ttl}     = $self->{log_ttl_day} * 24 * 60 * 60;
+    $base_dir ||= $config->{base_dir} || ".";
+    if ($base_dir =~ s{^\./}{}) {
+        die "Cannot use ./ notation in command argument.\n" unless -f $config_file;
+        $base_dir = Path::Tiny->new($config_file)->parent->child($base_dir);
     }
+    $base_dir = Path::Tiny->new($base_dir)->absolute->stringify;
+    { no warnings; *Miniqlo::base_dir = sub { $base_dir } }
+    @ARGV;
+}
+sub run ($self, @argv) {
+    $self = $self->new unless ref $self;
+    @argv = $self->parse_options(@argv);
+    my $proclet = $self->_proclet;
 }
 
-sub generate_cron ($self, $job) {
+sub _cleaner ($self) {
+    my $log_dir = $self->c->log_dir;
+    my $now = time;
+    my $deleted = 0;
     sub {
-        my $start_time = Time::Piece->new;
-        my $logfile = $self->cron_logfile($job->name, $start_time);
-        eval { $logfile->dirname->mkpath };
-        my $fh = $logfile->opena;
-        $fh->autoflush(1);
-        my $running_file = $self->create_running_file($job->name);
-        if (!$running_file) {
-            $self->info($fh, "Another cron is running, so exit (mark as fail).");
-        }
-        $self->db->insert(histroy => {
-            name => $job->name, start_time => $start_time->epoch,
-            logfile => $logfile->path,
-            (!$running_file ? (success => 0) : ())
-        });
-        return if !$running_file;
-        my $pid = open my $pipe, "-|";
-        if ($pid == 0) {
-            open STDERR, ">&", \*STDOUT;
-            open STDIN, "</dev/null";
-            exec $job->{script};
-            exit 255;
-        }
-        while (my $l = <$pipe>) {
-            $self->info($fh, $l);
-        }
-        close $pipe;
-        my $exit = Process::Status->new($?);
-        $self->db->update(history => {
-            name => $job->name, start_time => $start_time->epoch,
-            end_time => time,
-            success => $exit->is_success ? 1 : 0,
-        });
-        unlink $running_file->{path};
-        exit;
+        Path::Tiny->new($log_dir)->visit(
+            sub {
+                my $path = shift;
+                return unless $path->is_file;
+                my $stat = $path->stat;
+                if ($now - $stat->mtime > $self->log_ttl) {
+                    eval { $path->remove };
+                    if ($@) {
+                        warn "Failed to unlink $path: $@\n";
+                    } else {
+                        $deleted++;
+                    }
+                }
+            },
+            { recursive => 1},
+        );
+        warn "Deleted $deleted log files.\n";
     };
 }
 
-sub run ($self) {
+sub _proclet ($self) {
+    my $proclet = Proclet->new;
+    for my $cron ($self->c->load_cron) {
+        $proclet->service(
+            tag => $cron->name,
+            every => $cron->every,
+            code => $cron->code,
+        );
+    }
+    $proclet->service(
+        tag => '_web',
+        code => sub {
+            { no warnings 'once'; undef $Minialo::CONTEXT }
+            my $app = Miniqlo::Web->to_app;
+            my $loader = Plack::Loader->load(
+                'Starlet', port => $self->port, host => $self->host,
+            );
+            $loader->run($app);
+        },
+    );
+    $proclet->service(
+        tag   => '_cleaner',
+        every => '2 8,20 * * *',
+        code  => $self->_cleaner,
+    );
+    $proclet;
 }
-
 
 1;
