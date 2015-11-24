@@ -1,2 +1,2 @@
-script: echo "hello"; sleep 1; echo "done"
+script: echo "hello"; sleep 44; echo "done"
 every: "* * * * *"

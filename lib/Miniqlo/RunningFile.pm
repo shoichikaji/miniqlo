@@ -10,7 +10,7 @@ sub new ($class, $path) {
 sub path ($self) { $self->{path} }
 sub fh ($self) {
     $self->{fh} ||= do {
-        open my $fh, "+>>", $self->path or die "Cannot open @{[$self->path]}: $!";
+        open my $fh, "+>", $self->path or die "Cannot open @{[$self->path]}: $!";
         $fh;
     };
 }
@@ -21,7 +21,13 @@ sub is_running ($self) {
         $self->unlock;
         0;
     } else {
-        1;
+        sysread $self->fh, my $buffer, 10, 0;
+        if (length($buffer) != 0) {
+            warn "oops";
+            return 0;
+        } else {
+            return 0+$buffer
+        }
     }
 }
 
@@ -37,13 +43,18 @@ sub lock ($self, $timeout = 0) :method {
     }
 }
 
+sub write_pid ($self, $pid) {
+    sysseek $self->fh, 0, 0;
+    syswrite $self->fh, sprintf "%010d", $pid;
+}
+
 sub unlock ($self) {
     flock $self->fh, Fcntl::LOCK_UN;
 }
 
 sub unlink ($self) :method {
+    unlink $self->path if -f $self->path;
     close $self->fh if $self->fh;
-    unlink $self->path;
 }
 
 1;

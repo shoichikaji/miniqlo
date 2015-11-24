@@ -1,6 +1,7 @@
 package Miniqlo::Runner;
 use Miniqlo::Base;
 use Miniqlo::Web;
+use Miniqlo::Daemon;
 use Miniqlo;
 
 use Daemon::Control;
@@ -9,6 +10,8 @@ use JSON::PP ();
 use Plack::Loader;
 use Proclet;
 use Try::Tiny;
+use Time::Piece ();
+use File::RotateLogs;
 use Pod::Usage ();
 
 sub new ($class) { bless {}, $class }
@@ -39,16 +42,16 @@ sub parse_options ($self, @argv) {
         $config = JSON::PP->new->decode($content);
     }
     $config->{web} ||= +{};
-    $self->{port}        = $port        || $config->{web}{port}   || 5000;
-    $self->{host}        = $host        || $config->{web}{host}   || '0.0.0.0';
+    $self->{port}        = $port        || $config->{web}{port}        || 5000;
+    $self->{host}        = $host        || $config->{web}{host}        || '0.0.0.0';
     $self->{max_workers} = $max_workers || $config->{web}{max_workers} || 10;
-    $self->{log_ttl_day} = $log_ttl_day || $config->{log_ttl_day} || 14;
-    $self->{daemonize}   = $daemonize   || $config->{daemonize}   || 0;
-    $self->{log_ttl}     = $self->{log_ttl_day} * 24 * 60 * 60;
+    $self->{log_ttl_day} = $log_ttl_day || $config->{log_ttl_day}      || 14;
+    $self->{daemonize}   = $daemonize   || $config->{daemonize}        || 0;
+    $self->{log_ttl}      = $self->{log_ttl_day} * 24 * 60 * 60;
     $base_dir ||= $config->{base_dir} || ".";
     if ($base_dir =~ s{^\./}{}) {
         die "Cannot use ./ notation in command argument.\n" unless -f $config_file;
-        $base_dir = Path::Tiny->new($config_file)->parent->child($base_dir);
+        $base_dir = Path::Tiny->new($config_file)->parent->child($base_dir || ".");
     }
     $base_dir = Path::Tiny->new($base_dir)->absolute->stringify;
     { no warnings qw(once redefine); *Miniqlo::base_dir = sub { $base_dir } }
@@ -57,36 +60,34 @@ sub parse_options ($self, @argv) {
 sub run ($self, @argv) {
     $self = $self->new unless ref $self;
     @argv = $self->parse_options(@argv);
-    my $subcmd = shift @argv or die "Need subcommand, try `$0 --help`\n";
-    my %valid = (start => 1, stop => 1, restart => 1, help => 1);
-    $valid{$subcmd} or die "Unknown subcommand '$subcmd'\n";
+    my $subcmd = shift @argv || "start";
     $subcmd eq "help" and Pod::Usage::pod2usage(1);
+    my %valid = (start => 1, stop => 1, restart => 1, status => 1, help => 1);
+    $valid{$subcmd} or die "Unknown subcommand '$subcmd'\n";
 
-    my $logger;
     if ($self->daemonize) {
+        my $dir = $self->c->log_dir . "/_miniqlo";
+        Path::Tiny->new($dir)->mkpath unless -d $dir;
         my $rotate = File::RotateLogs->new(
-            logfile  => $self->c->log_dir . "/_miniqlo/%Y%m%d.log",
-            linkname => $self->c->log_dir . "/_miniqlo/latest.log",
+            logfile  => "$dir/%Y%m%d.log",
+            linkname => "$dir/latest.log",
             rotationtime => 24*60*60,
             maxage => 0,
-            offset => Time::Piece->localtime->tzoffset,
+            offset => 0 + ("" . Time::Piece->localtime->tzoffset),
         );
-        $logger = sub { $logger->print(@_) };
+        my $proclet = $self->_proclet(sub { $rotate->print(@_) });
+        my $daemon = $self->daemon(sub { $proclet->run });
+        exit $daemon->run_command($subcmd);
+    } elsif ($subcmd eq "start") {
+        my $proclet = $self->_proclet;
+        $proclet->run;
+    } else {
+        die "Cannot use '$subcmd' in non daemonize mode\n";
     }
-    my $proclet = $self->_proclet($logger ? (logger => $logger) : ());
 }
 
-sub daemon_control ($self, $program) {
-    Daemon::Control->new(
-        name => $0,
-        kill_timeout => 300,
-        stop_signals => ['TERM'],
-        program => $program,
-        pid_file => $self->base_dir . "/var/miniqlo.pid",
-        stdout_file => $self->base_dir . "/var/miniqlo.out",
-        stderr_file => $self->base_dir . "/var/miniqlo.out",
-        fork => 2,
-    );
+sub daemon ($self, $program) {
+    Miniqlo::Daemon->new(program => $program),
 }
 
 sub _cleaner ($self) {
