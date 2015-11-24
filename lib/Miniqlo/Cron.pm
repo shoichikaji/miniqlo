@@ -50,6 +50,7 @@ sub running_file ($self) {
     die "Cannot mkpath $dir" unless -d $dir;
     my $file = Miniqlo::RunningFile->new("$dir/" . $self->name);
     if ($file->lock(1)) { # timeout 1sec
+        $file->write_pid($$);
         $file;
     } else {
         undef;

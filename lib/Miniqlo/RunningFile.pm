@@ -10,7 +10,8 @@ sub new ($class, $path) {
 sub path ($self) { $self->{path} }
 sub fh ($self) {
     $self->{fh} ||= do {
-        open my $fh, "+>", $self->path or die "Cannot open @{[$self->path]}: $!";
+        sysopen my $fh, $self->path, Fcntl::O_RDWR() | Fcntl::O_CREAT()
+            or die "Cannot open @{[$self->path]}: $!";
         $fh;
     };
 }
@@ -21,10 +22,11 @@ sub is_running ($self) {
         $self->unlock;
         0;
     } else {
+        sysseek $self->fh, 0, 0;
         sysread $self->fh, my $buffer, 10, 0;
-        if (length($buffer) != 0) {
+        if (length($buffer) != 10) {
             warn "oops";
-            return 0;
+            return -1;
         } else {
             return 0+$buffer
         }
@@ -35,11 +37,11 @@ sub lock ($self, $timeout = 0) :method {
     my $fh = $self->fh;
     if ($timeout) {
         my $ok = with_timeout $timeout, sub {
-            flock $fh, Fcntl::LOCK_SH;
+            flock $fh, Fcntl::LOCK_EX;
         };
         return $ok;
     } else {
-        return flock $fh, Fcntl::LOCK_SH | Fcntl::LOCK_NB;
+        return flock $fh, Fcntl::LOCK_EX | Fcntl::LOCK_NB;
     }
 }
 
