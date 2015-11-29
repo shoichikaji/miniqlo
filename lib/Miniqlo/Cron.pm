@@ -21,6 +21,9 @@ sub new ($class, $c, $file) {
         die "Unknown file format $file";
     }
     ($hash->{name}) = $path->basename =~ /(.+)\.(?:yaml|yml|json)$/;
+    if ($hash->{name} =~ /^_/) {
+        die "Cron name cannot be started with '_' ($file)\n";
+    }
     $hash->{c} = $c;
     Scalar::Util::weaken($hash->{c});
     bless $hash, $class;

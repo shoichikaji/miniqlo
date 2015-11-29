@@ -6,11 +6,9 @@ use parent 'Daemon::Control';
 sub new ($class, %option) {
     $class->SUPER::new(
         name         => "miniqlo",
-        kill_timeout => 30,
-        stop_signals => ['TERM'],
-        pid_file     => $class->c->base_dir . "/var/miniqlo.pid",
-        stdout_file  => $class->c->base_dir . "/var/miniqlo.out",
-        stderr_file  => $class->c->base_dir . "/var/miniqlo.out",
+        pid_file     => $class->c->base_dir . "/var/daemon.pid",
+        stdout_file  => $class->c->base_dir . "/var/daemon.out",
+        stderr_file  => $class->c->base_dir . "/var/daemon.out",
         fork         => 2,
         %option,
     );
@@ -19,10 +17,23 @@ sub new ($class, %option) {
 sub c ($self) { Miniqlo->context || Miniqlo->bootstrap }
 
 sub pretty_print ($self, $msg, @) {
-    warn "-> $msg\n";
+    warn "$msg\n";
 }
 
-sub do_stop ($self) {
+sub do_start ($self, @arg) {
+    my $exit = $self->SUPER::do_start(@arg);
+    return $exit if $exit != 0;
+    sleep 5;
+    $self->read_pid;
+    if ($self->pid && $self->pid_running) {
+        return 0;
+    } else {
+        $self->prettry_print("ERROR miniqlo exit too immediately");
+        return 1;
+    }
+}
+
+sub do_stop ($self, @) {
     $self->read_pid;
     my $start_pid = $self->pid;
 
@@ -30,59 +41,47 @@ sub do_stop ($self) {
     return 1 unless $start_pid > 1;
 
     if ( $self->pid_running($start_pid) ) {
-        my $signal = 'TERM';
-        kill $signal => $start_pid;
+        $self->pretty_print("Stopping miniqlo (pid=$start_pid)");
+        kill TERM => $start_pid;
 
-        # for (1..$self->kill_timeout) {
-        #     # abort early if the process is now stopped
-        #     $self->trace("checking if pid $start_pid is still running...");
-        #     last if not $self->pid_running($start_pid);
-        #     sleep 1;
-        # }
-        # if ( $self->pid_running($start_pid) ) {
-        #     $self->pretty_print( "Failed to Stop", "red" );
-        #     return 1;
-        # }
-        my $sleeped = 0;
-        my $cron_stopped;
-        for (1..300) {
+        my ($sleeped, $cron_stopped) = (0, 0);
+        for (1..900) {
             my @running_cron = $self->c->running_cron;
             if (!@running_cron) {
                 $cron_stopped++;
                 last;
             }
-            if (++$sleeped % 1 == 0) {
+            if (++$sleeped % 10 == 0) {
                 my $msg = join ", ", map {
                     my ($pid, $name)  = ($_->{pid}, $_->{name});
                     "$name (pid=$pid)";
                 } @running_cron;
-                $self->pretty_print("Still running $msg");
+                $self->pretty_print("Still running cron $msg");
             }
             sleep 1;
         }
+        my $main_stopped;
         if ($cron_stopped) {
             for (1..10) {
                 if (!$self->pid_running($start_pid)) {
-                    $self->pretty_print("Stop OK");
-                    return 0;
+                    $main_stopped++;
+                    last;
                 } else {
                     sleep 1;
                 }
             }
         }
-        $self->pretty_print("Failed to stop");
-        return 1;
+        if ($cron_stopped && $main_stopped) {
+            $self->pretty_print("Successfully stopped");
+        } else {
+            $self->pretty_print("Failed to stop");
+            return 1;
+        }
     } else {
-        $self->pretty_print( "Not Running", "red" );
+        $self->pretty_print("Not Running", "red");
     }
-
-    # Clean up the PID file on stop, unless the pid
-    # doesn't match $start_pid (perhaps a standby
-    # worker stepped in to take over from the one
-    # that was just terminated).
-
     if ( $self->pid_file ) {
-      unlink($self->pid_file) if $self->read_pid == $start_pid;
+        unlink($self->pid_file) if $self->read_pid == $start_pid;
     }
     return 0;
 }

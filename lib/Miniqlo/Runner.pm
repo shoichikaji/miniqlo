@@ -82,24 +82,25 @@ sub run ($self, @argv) {
         );
         my $proclet = $self->_proclet(sub { $rotate->print(@_) });
         my $daemon = $self->daemon(sub {
-            $proclet->run;
-            my $term = 0;
-            local $SIG{TERM} = sub { $term++ };
             my $logging = sub {
                 my $msg = shift;
                 my $time = Time::Piece->new->strftime("%H:%M:%S");
                 $rotate->print($time . (" " x 12) . "| $msg\n");
             };
-            $logging->("INFO Catch signal TERM, try to shutdown...");
+            $logging->("INFO Start miniqlo");
+            $proclet->run;
+            my $term = 0;
+            local $SIG{TERM} = sub { $term++ };
+            $logging->("INFO Catch signal TERM, try to stop");
             my $times = 0;
             while (1) {
                 if ($term) {
-                    $logging->("WARN Catch another signal TERM, try to shutdown...");
+                    $logging->("WARN Catch another signal TERM, but sill some crons are running");
                     $term = 0;
                 }
                 my @running_cron = $self->c->running_cron;
                 last unless @running_cron;
-                if (++$times % 1 == 0) {
+                if (++$times % 10 == 0) {
                     my $msg = join ", ", map {
                         my ($pid, $name)  = ($_->{pid}, $_->{name});
                         "$name (pid=$pid)";
@@ -108,7 +109,8 @@ sub run ($self, @argv) {
                 }
                 sleep 1;
             }
-            $logging->("INFO All cron are finished, successfully shutdown\n");
+            $logging->("INFO Successfully stopped, all cron are finished");
+            exit 0;
         });
         exit $daemon->run_command($subcmd);
     } elsif ($subcmd eq "start") {
@@ -145,7 +147,7 @@ sub _cleaner ($self) {
                     };
                 }
             },
-            { recursive => 1},
+            { recursive => 1 },
         );
         for my $dir (@to_be_removed) {
             rmdir $dir; # don't check
