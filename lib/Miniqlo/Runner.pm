@@ -161,6 +161,9 @@ sub _cleaner ($self) {
 sub _proclet ($self, $logger = undef) {
     my $proclet = Proclet->new( $logger ? (logger => $logger) : () );
     for my $cron ($self->c->load_cron) {
+        if (my $error = $cron->validate) {
+            die "Failed to load @{[$cron->file]}: $error\n";
+        }
         $proclet->service(
             tag => $cron->name,
             every => $cron->every,

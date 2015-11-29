@@ -6,6 +6,7 @@ use JSON::PP ();
 use Path::Tiny ();
 use Process::Status;
 use Scalar::Util ();
+use POSIX ();
 
 my $YAML = YAML::Loader->new;
 my $JSON = JSON::PP->new->utf8(0);
@@ -21,17 +22,70 @@ sub new ($class, $c, $file) {
         die "Unknown file format $file";
     }
     ($hash->{name}) = $path->basename =~ /(.+)\.(?:yaml|yml|json)$/;
-    if ($hash->{name} =~ /^_/) {
-        die "Cron name cannot be started with '_' ($file)\n";
-    }
     $hash->{c} = $c;
+    $hash->{file} = $file->stringify;
     Scalar::Util::weaken($hash->{c});
     bless $hash, $class;
 }
 
+sub file   ($self) { $self->{file}   }
 sub script ($self) { $self->{script} }
 sub name   ($self) { $self->{name}   }
 sub every  ($self) { $self->{every}  }
+sub user   ($self) { $self->{user}   }
+sub group  ($self) { $self->{group}  }
+
+sub uid ($self) {
+    return unless $self->user;
+    $self->{uid} //= do {
+        my $uid = getpwnam $self->user or die;
+        $uid;
+    };
+}
+sub gid ($self) {
+    return if !$self->group && !$self->user;
+    $self->{gid} //= do {
+        if (my $group = $self->group) {
+            my $gid = getgrnam $self->group or die;
+            $gid;
+        } else {
+            my $gid = (getpwuid $self->uid)[3];
+            $gid;
+        }
+    };
+}
+
+sub validate ($self) {
+    my @error;
+    push @error, "missing script" unless $self->script;
+    push @error, "missing every" unless $self->every;
+    push @error, "name cannot be started with '_'" if $self->name =~ /^_/;
+    my $is_root = $< == 0;
+    if (!$is_root and ($self->user || $self->group)) {
+        push @error, "cannot use neither 'user' nor 'group' unless running as root";
+    }
+    if (my $group = $self->group) {
+        my $gid = getgrnam $self->group;
+        if (defined $gid) {
+            $self->{gid} = $gid;
+        } else {
+            push @error, "invalid group '$group'";
+        }
+    }
+    if (my $user = $self->user) {
+        my $uid = getpwnam $self->user;
+        if (defined $uid) {
+            $self->{uid} = $uid;
+        } else {
+            push @error, "invalid user '$user'";
+        }
+    }
+    if (@error) {
+        return join ", ", @error;
+    } else {
+        return;
+    }
+}
 
 sub c ($self) { $self->{c} }
 sub db ($self) { $self->c->db }
@@ -89,6 +143,14 @@ sub code ($self) {
         }
         my $pid = open my $pipe, "-|";
         if ($pid == 0) {
+            if (defined $self->gid) {
+                POSIX::setgid($self->gid) or die "Cannot setgid @{[$self->gid]}: $!";
+            }
+            if (defined $self->uid) {
+                POSIX::setuid($self->uid) or die "Cannot setuid @{[$self->uid]}: $!";
+                $ENV{USER} = $self->user;
+                $ENV{HOME} = (getpwuid $self->uid)[7];
+            }
             open STDERR, ">&", \*STDOUT;
             open STDIN, "</dev/null";
             exec $self->script;
