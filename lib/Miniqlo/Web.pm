@@ -20,9 +20,11 @@ use Plack::Builder;
 use Plack::App::File;
 sub to_app ($self) {
     my $app = $self->SUPER::to_app;
-    my $file = Plack::App::File->new(root => $self->base_dir . "/assets/src/")->to_app;
-    builder {
+    my $file = builder {
         enable 'DirIndex';
+        Plack::App::File->new(root => $self->base_dir . "/assets/")->to_app;
+    };
+    builder {
         enable 'Static', path => sub { s{^/cron/_log/}{} }, root => $self->log_dir . "/";
         mount "/cron" => $app;
         mount "/" => $file;
