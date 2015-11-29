@@ -65,6 +65,11 @@ sub run ($self, @argv) {
     my %valid = (start => 1, stop => 1, restart => 1, status => 1, help => 1);
     $valid{$subcmd} or die "Unknown subcommand '$subcmd'\n";
 
+    local $Log::Minimal::PRINT = sub {
+        my ($time, $type, $message, $trace, $raw_message) = @_;
+        $message =~ s/(?:\\n)+$//;
+        warn "$type $message\n";
+    };
     if ($self->daemonize) {
         my $dir = $self->c->log_dir . "/_miniqlo";
         Path::Tiny->new($dir)->mkpath unless -d $dir;
@@ -76,7 +81,35 @@ sub run ($self, @argv) {
             offset => 0 + ("" . Time::Piece->localtime->tzoffset),
         );
         my $proclet = $self->_proclet(sub { $rotate->print(@_) });
-        my $daemon = $self->daemon(sub { $proclet->run });
+        my $daemon = $self->daemon(sub {
+            $proclet->run;
+            my $term = 0;
+            local $SIG{TERM} = sub { $term++ };
+            my $logging = sub {
+                my $msg = shift;
+                my $time = Time::Piece->new->strftime("%H:%M:%S");
+                $rotate->print($time . (" " x 12) . "| $msg\n");
+            };
+            $logging->("INFO Catch signal TERM, try to shutdown...");
+            my $times = 0;
+            while (1) {
+                if ($term) {
+                    $logging->("WARN Catch another signal TERM, try to shutdown...");
+                    $term = 0;
+                }
+                my @running_cron = $self->c->running_cron;
+                last unless @running_cron;
+                if (++$times % 1 == 0) {
+                    my $msg = join ", ", map {
+                        my ($pid, $name)  = ($_->{pid}, $_->{name});
+                        "$name (pid=$pid)";
+                    } @running_cron;
+                    $logging->("INFO Still running $msg");
+                }
+                sleep 1;
+            }
+            $logging->("INFO All cron are finished, successfully shutdown\n");
+        });
         exit $daemon->run_command($subcmd);
     } elsif ($subcmd eq "start") {
         my $proclet = $self->_proclet;
