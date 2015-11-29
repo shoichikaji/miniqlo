@@ -1,2 +1,2 @@
-script: echo "this is sample2"; sleep 50; echo "done"
+script: echo "this is sample2"; sleep 65; echo "done"
 every: "* * * * *"

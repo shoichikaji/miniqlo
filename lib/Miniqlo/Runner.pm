@@ -70,6 +70,7 @@ sub run ($self, @argv) {
         $message =~ s/(?:\\n)+$//;
         warn "$type $message\n";
     };
+    $0 = "miniqlo";
     if ($self->daemonize) {
         my $dir = $self->c->log_dir . "/_miniqlo";
         Path::Tiny->new($dir)->mkpath unless -d $dir;
@@ -128,6 +129,7 @@ sub daemon ($self, $program) {
 sub _cleaner ($self) {
     my $log_dir = Path::Tiny->new($self->c->log_dir);
     sub {
+        $0 = "miniqlo cleaner";
         my $now = time;
         my $deleted = 0;
         my @to_be_removed;
@@ -169,6 +171,7 @@ sub _proclet ($self, $logger = undef) {
         tag => '_web',
         code => sub {
             { no warnings 'once'; undef $Minialo::CONTEXT }
+            $0 = "miniqlo web";
             my $app = Miniqlo::Web->to_app;
             my $loader = Plack::Loader->load(
                 'Starlet', port => $self->port, host => $self->host,

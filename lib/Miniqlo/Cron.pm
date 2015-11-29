@@ -67,6 +67,7 @@ sub is_running ($self) {
 
 sub code ($self) {
     sub {
+        $0 = "miniqlo cron @{[$self->name]}";
         my $start_time = Time::Piece->new;
         my $log_file = $self->log_file($start_time);
         my $abs_log_file = Path::Tiny->new($self->c->log_dir, $log_file);
@@ -81,7 +82,9 @@ sub code ($self) {
             (!$running_file ? (success => 0) : ())
         });
         if (!$running_file) {
-            $self->print($fh, "Another cron is running, so exit (mark as fail).");
+            my $msg = "WARN Another cron is running, so exit (mark as fail)";
+            $self->print($fh, $msg);
+            warn "$msg\n";
             return;
         }
         my $pid = open my $pipe, "-|";

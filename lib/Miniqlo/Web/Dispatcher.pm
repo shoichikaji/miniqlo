@@ -8,7 +8,7 @@ get '/' => sub ($c, @) {
     my @out;
     for my $cron (@cron) {
         my $latest = $c->db->single(
-            'history', {name => $cron->name}, {order_by => 'start_time'},
+            'history', {name => $cron->name}, {order_by => 'start_time DESC'},
         );
         push @out, {
             name => $cron->name, is_running => $cron->is_running,
