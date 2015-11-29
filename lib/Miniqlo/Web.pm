@@ -16,12 +16,28 @@ __PACKAGE__->add_trigger(
     },
 );
 
-use Plack::Middleware::Static;
+use Plack::Builder;
+use Plack::App::File;
 sub to_app ($self) {
-    Plack::Middleware::Static->wrap(
-        $self->SUPER::to_app,
-        path => sub { s{^/cron-log/}{} }, root => $self->log_dir . "/",
-    );
+    my $app = $self->SUPER::to_app;
+    my $file = Plack::App::File->new(root => $self->base_dir . "/assets/src/")->to_app;
+    builder {
+        enable 'DirIndex';
+        enable 'Static', path => sub { s{^/cron/_log/}{} }, root => $self->log_dir . "/";
+        mount "/cron" => $app;
+        mount "/" => $file;
+    };
+}
+
+sub render_csv ($self, $body) {
+    my $res = $self->create_response(200);
+    if (ref $body) {
+        $body = join("\n", map { join ",", $_->@* } $body->@*) . "\n";
+    }
+    $res->content_type("text/csv; charset=utf-8");
+    $res->content_length(length $body);
+    $res->body($body);
+    $res;
 }
 
 1;

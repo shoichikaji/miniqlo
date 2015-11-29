@@ -6,6 +6,7 @@ requires 'Daemon::Control';
 requires 'File::RotateLogs';
 requires 'Path::Tiny';
 requires 'Plack';
+requires 'Plack::Middleware::DirIndex';
 requires 'Process::Status';
 requires 'Proclet';
 requires 'Starlet';

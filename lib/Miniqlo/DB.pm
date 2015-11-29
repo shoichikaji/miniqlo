@@ -11,8 +11,25 @@ package Miniqlo::DB::Schema {
         for my $int (qw(start_time end_time success)) {
             inflate $int => sub { 0 + shift };
         }
+        row_class "Miniqlo::DB::Row";
     };
     $INC{"Miniqlo/DB/Schema.pm"} = __FILE__;
+}
+package Miniqlo::DB::Row {
+    use parent 'Teng::Row';
+    use Time::Piece ();
+    sub get_object ($self, $name) {
+        unless ($name && $name =~ /time$/) {
+            die "Cannot call get_as_object with $name column";
+        }
+        Time::Piece->new( $self->get($name) );
+    }
+    sub get_elapsed ($self) {
+        my $end = $self->get('end_time');
+        return 0 if $end == 0;
+        $end - $self->get('start_time');
+    }
+    $INC{"Miniqlo/DB/Row.pm"} = __FILE__;
 }
 
 sub new ($class, %option) {
