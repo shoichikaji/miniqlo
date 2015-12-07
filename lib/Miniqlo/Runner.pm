@@ -149,7 +149,7 @@ sub _cleaner ($self) {
                     };
                 }
             },
-            { recursive => 1 },
+            { recurse => 1 },
         );
         for my $dir (@to_be_removed) {
             rmdir $dir; # don't check

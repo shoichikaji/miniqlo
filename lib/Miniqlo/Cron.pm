@@ -130,7 +130,7 @@ sub code ($self) {
         my $fh = $abs_log_file->opena;
         $fh->autoflush(1);
         my $running_file = $self->running_file;
-        $self->db->insert(history => {
+        my $row = $self->db->insert(history => {
             name => $self->name, start_time => $start_time->epoch,
             log_file => $log_file->path,
             (!$running_file ? (success => 0) : ())
@@ -139,6 +139,7 @@ sub code ($self) {
             my $msg = "WARN Another cron is running, so exit (mark as fail)";
             $self->print($fh, $msg);
             warn "$msg\n";
+            $row->update({end_time => time, success => 0});
             return;
         }
         my $pid = open my $pipe, "-|";
@@ -161,14 +162,7 @@ sub code ($self) {
         }
         close $pipe;
         my $exit = Process::Status->new($?);
-        my $row = $self->db->single(history => {
-            name => $self->name, start_time => $start_time->epoch,
-        });
-        if ($row) {
-            $row->update({end_time => time, success => $exit->is_success ? 1 : 0});
-        } else {
-            warn "WHAT TO DO";
-        }
+        $row->update({end_time => time, success => $exit->is_success ? 1 : 0});
         $running_file->unlink;
         exit;
     };
